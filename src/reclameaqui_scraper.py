@@ -4,8 +4,8 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-#from bs4 import BeautifulSoup
 import time
+from bs4 import BeautifulSoup
 
 
 class ReclameAquiScraper:
@@ -13,7 +13,7 @@ class ReclameAquiScraper:
         edge_options=webdriver.EdgeOptions()
         self.driver=webdriver.Edge(options=edge_options)
 
-#Abre navegador para edge
+ #Abre navegador para edge
         self.base_url = "https://www.reclameaqui.com.br" 
         self.wait = WebDriverWait(self.driver, 15) 
         self.results = [] 
@@ -25,6 +25,7 @@ class ReclameAquiScraper:
         try:
             self.wait.until(EC.presence_of_element_located((By.TAG_NAME, "footer")))
             print("Página principal do Reclame Aqui carregada.")
+            
         except:
             print("Tempo esgotado ao esperar pela página.")
 
@@ -34,7 +35,7 @@ class ReclameAquiScraper:
             print("Navegador fechado.")
 
 #Extrai Casas de Aposta
-    def get_company_lists(self):
+    def get_empresa_lists(self):
         print("Extraindo de: 'Casa de aposta' ")
         companies_to_scrape=[]
 
@@ -77,7 +78,8 @@ class ReclameAquiScraper:
                 
                 for element in empresa_elements_melhor [:3]:
                     nome_limpo = element.text.strip().splitlines()[1]
-                    companies_to_scrape.append({'Nome': nome_limpo, 'Tipo': 'Melhor'})
+                    slug_path = element.get_attribute('href')
+                    companies_to_scrape.append({'Nome': nome_limpo, 'Tipo': 'Melhor', 'Slug_path': slug_path})
 
                 #PIORES
                 empresa_select_pior = 'li[data-testid="tab-worst"]'
@@ -90,7 +92,8 @@ class ReclameAquiScraper:
 
                 for element in empresa_elements_pior [:3]:
                     nome_limpo = element.text.strip().splitlines()[1]
-                    companies_to_scrape.append({'Nome': nome_limpo, 'Tipo': 'Pior'})
+                    slug_path = element.get_attribute('href')
+                    companies_to_scrape.append({'Nome': nome_limpo, 'Tipo': 'Pior', 'Slug_path': slug_path})
                         
                 print(f"Empresas encontradas: {len (companies_to_scrape)}")
                 print(f"Lista parcial: {companies_to_scrape}") 
@@ -98,25 +101,118 @@ class ReclameAquiScraper:
             
             except Exception as erro:
                 print(f"Erro ao exibir as listas: {erro}")
-        
-        
+
         except Exception as err:
             print(f"Erro : {err}")
             return[]
+       
+#Extrai dados
+    def extrai_data(self, empresa_data,  per_f = "últimos 6 meses é", per_label = "6 meses"):
+        nome_empresa = empresa_data['Nome']
+
+        slug_path = empresa_data['Slug_path']       
+  
+        data = empresa_data.copy()
+        data ['Período'] = per_label     
+
+        if slug_path.startswith('http'):
+            empresa_URL = slug_path
+        else:
+            empresa_URL = self.base_url.rstrip('/') + slug_path
+            
+        self.driver.get(empresa_URL)
+        data['URL'] = empresa_URL
+
+        print(f"Extraindo dados da empresa: {nome_empresa}")
+
+        teste_xpath_espera = f"//span[contains(text(), '{per_f}' ]/b"
+        try:
+            self.wait.until(EC.presence_of_element_located((By.XPATH, teste_xpath_espera)))
+        except:
+            print(f"ERRO perfil {nome_empresa} não carrega")
+            data['Nota Geral'] = "Pagina nao carregada"
+            self.results.append(data)
+            return
+        html_conteudo = self.driver.page_source
+        soup = BeautifulSoup(html_conteudo, 'html.parser')
+
+        data_bs4 = {
+        'Nota Geral': (lambda tag: tag.name == 'b' and tag.parent and per_f in tag.parent.text),
+        'Reclamações respondidas (%)': (lambda tag: tag.name == 'strong' and 'Respondeu' in tag.parent.text),
+        'Voltariam a fazer negócio (%)': (lambda tag: tag.name == 'strong' and 'Dos que avaliaram' in tag.parent.text),
+        'Índice de solução (%)': (lambda tag: tag.name == 'strong' and 'A empresa resolveu' in tag.parent.text),
+        'Nota do consumidor': (lambda tag: tag.name == 'strong' and 'Nota média' in tag.parent.text and tag.parent.find_all('strong')) 
+        }
+
+        for label, bs4_selector in data_bs4.items():
+            try:
+                elemento = soup.find(bs4_selector)
+                if elemento:
+                    valor_bruto = elemento.text.strip()
+                    if label == 'Nota Geral' :
+                        valor = valor_bruto.splitlines()[0]
+                    else:
+                        valor= valor_bruto.split(" ")[0]
+                    data[label]= valor
+                else:
+                    data[label]= "N/A"
+                    
+            except Exception as e:
+                data[label]= "N/A"
+
+        self.results.append(data)
+        print(f"Dados de {nome_empresa} extraidos com sucesso")
+
+#troca de periodo
+    def troca_periodo(self, periodo_nome):
+        if periodo_nome =="6 meses":
+            return True
+    
+        print("Alternando periodos")
+
+        tab_xpath = f"//button[contains(text(), '{periodo_nome}')]"
+
+        try:
+            tab_elemento = self.wait.until(EC.element_to_be_clickable((By.XPATH, tab_xpath)))
+            self.driver.execute_script("arguments[0].click();", tab_elemento)
+            print(f"Alternado para {periodo_nome}")
+            return True
+        except:
+            print(f"Aba {periodo_nome} não encontrada")
+            return False
 
 
+from ExportaData import ExportaData
 if __name__ == '__main__':
         scraper = None
+        exporter = ExportaData()
         try:
             scraper = ReclameAquiScraper()
             scraper.open_site()
+            companies = scraper.get_empresa_lists()
 
-            companies = scraper.get_company_lists()
+            periodos = {
+                "6 meses": "últimos 6 meses é", 
+                "12 meses": "últimos 12 meses é",
+                "2024": "2024 é",
+                "2023": "2023 é",
+                "Geral": "geral é"
+            }
 
-            time.sleep(5)
+            for empresa_data in companies:
+                for per_label, per_f in periodos.items():
+                    if scraper.troca_periodo(per_label):
+                        scraper.extrai_data(
+                            empresa_data.copy(),
+                            per_f=per_f,
+                            per_label=per_label
+                        )
+            print("exportando para excel...")
+            exporter.export_to_excel(scraper.results)
+
 
         except Exception as e:
-            print("Erro na execução: {e}")
+            print(f"erro final {e}")
         finally:
             if scraper:
                 scraper.close()
