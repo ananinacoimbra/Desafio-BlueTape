@@ -181,107 +181,49 @@ class ReclameAquiScraper:
         print("\nProcessamento de todas as empresas concluído.")
 
 
-    # def raspar_dados_perfil(self, html_pagina, nome_empresa):
-           
-    #         soup = BeautifulSoup(html_pagina, 'html.parser')
-    #         dados_raspadados = {'Empresa': nome_empresa}
-
-    #         def extrair_do_texto(exp_chave, strong_p = 0):
-    #             span_da_frase = soup.find('span', text=lambda t:t and exp_chave in t)
-
-    #             if span_da_frase:
-    #                 strong_elements = span_da_frase.find_all('strong')
-    #                 if len(strong_elements)> strong_p:
-    #                     valor_texto = strong_elements[strong_p].text.strip()
-    #                     return valor_texto.split(" ")[0]
-                
-    #             return 'N/A'
-            
-    #         try:
-    #             nota_element = soup.find('p', class_=lambda x: x and 'score-component-default__text--large' in x)
-    #             dados_raspadados['Nota'] = nota_element.text.strip() if nota_element else 'N/A'
-
-    #             if dados_raspadados['Nota'] == 'N/A':
-    #                 nota_element_push = soup.find('h2', class_= lambda x:x and 'score' in x )
-    #                 if nota_element_push:
-    #                     dados_raspadados['Nota'] = nota_element_push.text.strip().splitlines()[0]
-
-
-
-    #             dados_raspadados['Reclamações respondidas'] = extrair_do_texto('Respondeu', strong_p=0)
-    #             dados_raspadados['Voltariam a fazer negócio'] = extrair_do_texto('Dos que avaliaram', strong_p=0)
-    #             dados_raspadados['Índice de solução'] = extrair_do_texto('A empresa resolveu', strong_p=0)
-    #             dados_raspadados['Nota do consumidor'] = extrair_do_texto('Há', strong_p=0)
-                
-    #             print(f"Dados de '{nome_empresa}' raspados com sucesso!")
-                
-    #         except Exception as e:
-    #             print(f"ERRO para raspagem {nome_empresa}: {e}")
-    #             dados_raspadados.update({
-    #                 k: 'N/A' for k in ['Nota', 'Reclamações respondidas', 'Voltariam a fazer negócio', 'Índice de solução', 'Nota do consumidor'] if k not in dados_raspadados
-    #             })
-                
-    #         return dados_raspadados
-   
     def raspar_dados_perfil(self, html_pagina, nome_empresa):
-        """
-        Tenta extrair as métricas usando Beautiful Soup. Usa a busca pelo título 
-        (texto exato) e busca de valores vizinhos para maior robustez.
-        """
-        soup = BeautifulSoup(html_pagina, 'html.parser')
-        dados_raspadados = {'Empresa': nome_empresa}
+           
+            soup = BeautifulSoup(html_pagina, 'html.parser')
+            dados_raspadados = {'Empresa': nome_empresa}
 
-        METRICAS = [
-            'Nota', 
-            'Reclamações respondidas', 
-            'Voltariam a fazer negócio', 
-            'Índice de solução', 
-            'Nota do consumidor'
-        ]
-        
-        # Inicializa todos com N/D (ou 'N/A' se for o padrão de saída)
-        for k in METRICAS:
-            dados_raspadados[k] = 'N/D'
+            def extrair_do_texto(exp_chave, strong_p = 0):
+                span_da_frase = soup.find('span', text=lambda t:t and exp_chave in t)
 
-        try:
-            # --- FUNÇÃO AUXILIAR DE BUSCA ---
-            def _extrair_valor_vizinho(titulo_procurado):
-                # 1. Encontra a tag que contém o título (o label, ex: 'Índice de solução')
-                titulo_tag = soup.find('p', text=titulo_procurado)
+                if span_da_frase:
+                    strong_elements = span_da_frase.find_all('strong')
+                    if len(strong_elements)> strong_p:
+                        valor_texto = strong_elements[strong_p].text.strip()
+                        return valor_texto.split(" ")[0]
                 
-                if titulo_tag:
-                    # 2. O valor (percentual) é geralmente o irmão anterior
-                    valor_tag = titulo_tag.find_previous_sibling()
-                    
-                    if valor_tag:
-                        valor_limpo = valor_tag.get_text(strip=True).replace(',', '.')
-                        # Tenta extrair apenas o número se houver mais texto
-                        match = re.search(r'[\d,.]+%?', valor_limpo)
-                        return match.group(0) if match else valor_limpo
+                return 'N/A'
+            
+            try:
+                nota_element = soup.find('p', class_=lambda x: x and 'score-component-default__text--large' in x)
+                dados_raspadados['Nota'] = nota_element.text.strip() if nota_element else 'N/A'
+
+                if dados_raspadados['Nota'] == 'N/A':
+                    nota_element_push = soup.find('h2', class_= lambda x:x and 'score' in x )
+                    if nota_element_push:
+                        dados_raspadados['Nota'] = nota_element_push.text.strip().splitlines()[0]
+
+
+
+                dados_raspadados['Reclamações respondidas'] = extrair_do_texto('Respondeu', strong_p=0)
+                dados_raspadados['Voltariam a fazer negócio'] = extrair_do_texto('Dos que avaliaram', strong_p=0)
+                dados_raspadados['Índice de solução'] = extrair_do_texto('A empresa resolveu', strong_p=0)
+                dados_raspadados['Nota do consumidor'] = extrair_do_texto('Há', strong_p=0)
                 
-                return 'N/D'
-
-            # --- 1. NOTA GERAL ---
-            # Tenta a classe mais genérica para o score grande
-            nota_element = soup.find('p', class_=lambda x: x and 'score-component-default' in x and 'large' in x)
-            if nota_element:
-                dados_raspadados['Nota'] = nota_element.get_text(strip=True).replace(',', '.')
-            
-            # --- 2. PERCENTUAIS ---
-            dados_raspadados['Reclamações respondidas'] = _extrair_valor_vizinho('Reclamações respondidas')
-            dados_raspadados['Voltariam a fazer negócio'] = _extrair_valor_vizinho('Voltariam a fazer negócio')
-            dados_raspadados['Índice de solução'] = _extrair_valor_vizinho('Índice de solução')
-            
-            # Tenta a Nota do Consumidor, que às vezes está em estrutura diferente
-            dados_raspadados['Nota do consumidor'] = _extrair_valor_vizinho('Nota do consumidor')
-            
-            print(f"✅ Raspagem de dados finalizada para '{nome_empresa}'.")
-
-        except Exception as e:
-            print(f"❌ Erro crítico no Beautiful Soup para {nome_empresa}. Motivo: {e}")
-            # Retorna N/D
-            
-        return dados_raspadados
+                print(f"Dados de '{nome_empresa}' raspados com sucesso!")
+                
+            except Exception as e:
+                print(f"ERRO para raspagem {nome_empresa}: {e}")
+                dados_raspadados.update({
+                    k: 'N/A' for k in ['Nota', 'Reclamações respondidas', 'Voltariam a fazer negócio', 'Índice de solução', 'Nota do consumidor'] if k not in dados_raspadados
+                })
+                
+            return dados_raspadados
+   
+   
     def processar_empresas(self, lista_empresas):
        
         if not lista_empresas:
