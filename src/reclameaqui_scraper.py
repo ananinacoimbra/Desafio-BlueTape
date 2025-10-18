@@ -24,7 +24,7 @@ class ReclameAquiScraper:
 
         self.driver = webdriver.Edge(options=edge_options)
 
-        #Abre navegador para edge
+        
         self.base_url = "https://www.reclameaqui.com.br" 
         self.wait = WebDriverWait(self.driver, 6) 
         self.results = [] 
@@ -149,6 +149,7 @@ class ReclameAquiScraper:
             "2023": "newPerformanceCard-tab-4",
             "Geral": "newPerformanceCard-tab-5",
         }
+
         if periodo_alvo not in PERIODO_MAP:
             print("Periodo nao encontrado")
             return False
@@ -156,7 +157,6 @@ class ReclameAquiScraper:
         id_periodo = PERIODO_MAP[periodo_alvo]
 
         try:
-
             qual_periodo = self.wait.until(EC.element_to_be_clickable((By.ID, id_periodo)))
             self.driver.execute_script("arguments[0].click();", qual_periodo)
             print(f"Periodo: {periodo_alvo}")

@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import subprocess
 
 class ExportaData:
 
@@ -12,6 +13,11 @@ class ExportaData:
             return False
         try:
             df = pd.DataFrame(data_list)
+
+            #tratar info ñ encontrada
+            df = df.fillna("-")
+            df = df.replace(".","-")
+
             dir_name = os.path.dirname(self.filename)
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
@@ -28,6 +34,13 @@ class ExportaData:
                     df.to_excel(writer, sheet_name='Dados', index=False)
                     print(" Coluna 'Periodo' não encontrada. Dados salvos em aba única 'Dados'.")
             print(f"Exportação concluída com sucesso: {self.filename}")
+
+            try: 
+                subprocess.run (['start', '', self.filename], shell=True)
+                print("Abrindo arquivo salvo do excel...")
+            except Exception as err:
+                print(f"Erro para abrir arquivo: {err}")
+
             return True
         except Exception as ex:
             print(f"ERRO ao exportar arquivo: {ex}")
