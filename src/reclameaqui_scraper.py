@@ -5,9 +5,10 @@ from selenium.webdriver.edge.options import Options as EdgeOptions
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
+import re
 from bs4 import BeautifulSoup
 from ExportaData import ExportaData
-import re 
+ 
 
 
 class ReclameAquiScraper:
@@ -23,7 +24,7 @@ class ReclameAquiScraper:
 
         self.driver = webdriver.Edge(options=edge_options)
 
-        #Abre navegador para edge
+        
         self.base_url = "https://www.reclameaqui.com.br" 
         self.wait = WebDriverWait(self.driver, 6) 
         self.results = [] 
@@ -115,8 +116,7 @@ class ReclameAquiScraper:
         except Exception as err:
             print(f"Erro : {err}")
             return[]
-    #Rapasr dados
-   
+    
     def reinicializar_driver(self):
         if hasattr(self, 'driver') and self.driver:
             self.close() 
@@ -141,180 +141,198 @@ class ReclameAquiScraper:
             print(f"ERRO CRÍTICO ao reinicializar o driver: {e}")
             return False
         
-    def processar_empresas(self, lista_empresas):
+    def navegar_por_tabs (self, periodo_alvo):
+        PERIODO_MAP = {
+            "6 meses": "newPerformanceCard-tab-1",
+            "12 meses": "newPerformanceCard-tab-2",
+            "2024": "newPerformanceCard-tab-3",
+            "2023": "newPerformanceCard-tab-4",
+            "Geral": "newPerformanceCard-tab-5",
+        }
 
+        if periodo_alvo not in PERIODO_MAP:
+            print("Periodo nao encontrado")
+            return False
+
+        id_periodo = PERIODO_MAP[periodo_alvo]
+
+        try:
+            qual_periodo = self.wait.until(EC.element_to_be_clickable((By.ID, id_periodo)))
+            self.driver.execute_script("arguments[0].click();", qual_periodo)
+            print(f"Periodo: {periodo_alvo}")
+            time.sleep(2)
+            return True
+        
+        except Exception as e:
+            print(f"Nao foi possivel clicar em {periodo_alvo}")  
+    
+
+    def raspar_dados(self, html_pagina, nome_empresa):
+        soup = BeautifulSoup(html_pagina, 'html.parser')
+        dados_raspados = {'Empresa': nome_empresa}
+
+        METRICAS = [
+            'Nota', 'Reclamações respondidas', 'Voltariam a fazer negócio', 
+            'Índice de solução', 'Nota do consumidor'
+        ]
+        for k in METRICAS:
+            dados_raspados[k] = 'N/D'
+
+        def extrair_proximo(frase_chave):
+            tag = soup.find(text=lambda t: t and frase_chave.lower() in t.lower())
+            if tag:
+                parent = tag.find_parent()
+                strong = parent.find('strong')
+                if strong:
+                    texto = strong.get_text(strip=True).replace(',', '.')
+                    match = re.search(r'[\d,\.]+%?', texto)
+                    return match.group(0) if match else texto
+            return 'N/D'
+
+        try:
+            nota_geral = None
+
+            possiveis_classes = [
+                'sc-5z7mni-2',  
+                'sc-1pe7b5t-2', 
+                'rating',       
+                'sc-gqPbQI',    
+            ]
+            for classe in possiveis_classes:
+                tag = soup.find('div', class_=lambda c: c and classe in c)
+                if tag and re.search(r'\d', tag.get_text()):
+                    nota_geral = tag.get_text(strip=True)
+                    break
+
+            if not nota_geral:
+
+                nota_tag = soup.find(text=re.compile(r'nota média', re.I))
+                if nota_tag:
+                    b_tag = nota_tag.find_parent().find('b')
+                    if b_tag:
+                        nota_geral = b_tag.get_text(strip=True)
+
+            if nota_geral:
+                nota_limpa = nota_geral.replace(',', '.').split('/')[0]
+                dados_raspados['Nota'] = nota_limpa
+
+            dados_raspados['Reclamações respondidas'] = extrair_proximo('Respondeu')
+            dados_raspados['Voltariam a fazer negócio'] = extrair_proximo('Dos que avaliaram,')
+            dados_raspados['Índice de solução'] = extrair_proximo('A empresa resolveu')
+
+            nota_consumidor = None
+
+            possiveis_textos = [
+                'nota média dos consumidores',
+                'nota do consumidor',
+                'nota média avaliada pelos consumidores',
+            ]
+
+            for frase in possiveis_textos:
+                tag = soup.find(text=lambda t: t and frase in t.lower())
+                if tag:
+                    
+                    bloco = tag.find_parent()
+                    if bloco:
+                        
+                        match = re.search(r'\d{1,2}[,.]\d{1}', bloco.get_text())
+                        if match:
+                            nota_consumidor = match.group(0)
+                            break
+
+            if not nota_consumidor:
+                nota_tag = soup.find(string=re.compile(r'\d{1,2}[,.]\d{1}\s*/\s*10'))
+                if nota_tag:
+                    nota_consumidor = re.search(r'\d{1,2}[,.]\d{1}', nota_tag).group(0)
+
+            if not nota_consumidor:
+                possiveis_classes = ['sc-1pe7b5t-2', 'sc-5z7mni-2', 'rating']
+                for classe in possiveis_classes:
+                    div = soup.find('div', class_=lambda c: c and classe in c)
+                    if div and re.search(r'\d', div.get_text()):
+                        match = re.search(r'\d{1,2}[,.]\d{1}', div.get_text())
+                        if match:
+                            nota_consumidor = match.group(0)
+                            break
+
+            if nota_consumidor:
+                dados_raspados['Nota do consumidor'] = nota_consumidor.replace(',', '.')
+
+
+            print("\n--- DADOS RASPADOS PARA DEBUG ---")
+            for chave, valor in dados_raspados.items():
+                print(f"{chave}: {valor}")
+            print("---------------------------------")
+
+        except Exception as e:
+            print(f"Erro na raspagem de dados para {nome_empresa}. Motivo: {e}")
+
+        return dados_raspados
+
+
+    def raspar_empresas(self, lista_empresas):
+        PERIODOS_ALVO = ["6 meses", "12 meses", "2024", "2023", "Geral"]
         if not lista_empresas:
             print("Lista de empresas vazia. Nada para processar.")
-           
-            self.close() 
             return
-        
+
         for empresa in lista_empresas:
             nome_empresa = empresa['Nome']
             url_do_perfil = self.base_url + empresa['Slug_path'] 
             
-            try:
+            try: 
+                if not self.reinicializar_driver():
+                    print("Parando o processamento devido à falha crítica de inicialização do driver.")
+                    break 
                 
-                self.reinicializar_driver() 
-             
                 time.sleep(2) 
-                
                 print(f"\n[INÍCIO DO PROCESSO] Empresa: {nome_empresa}")
-                self.driver.get(url_do_perfil)
                 
-                self.wait.until(EC.presence_of_element_located((By.TAG_NAME, "footer"))) 
                 
-                html_pagina = self.driver.page_source
-                dados = self.raspar_dados_perfil(html_pagina, nome_empresa)
-
-                dados['Tipo'] = empresa['Tipo']
-                dados['URL'] = url_do_perfil
-                self.results.append(dados) 
-                
-            except Exception as e:
-                
-                print(f"ERRO para processar: {nome_empresa}. Erro: {e}")
-            
-            finally:
-                self.close()
-                
-        print("\nProcessamento de todas as empresas concluído.")
+                self.driver.get(url_do_perfil) 
+                self.wait.until(EC.presence_of_element_located((By.TAG_NAME, "footer")))
 
 
-    def raspar_dados_perfil(self, html_pagina, nome_empresa):
-           
-            soup = BeautifulSoup(html_pagina, 'html.parser')
-            dados_raspadados = {'Empresa': nome_empresa}
-
-            def extrair_do_texto(exp_chave, strong_p = 0):
-                span_da_frase = soup.find('span', text=lambda t:t and exp_chave in t)
-
-                if span_da_frase:
-                    strong_elements = span_da_frase.find_all('strong')
-                    if len(strong_elements)> strong_p:
-                        valor_texto = strong_elements[strong_p].text.strip()
-                        return valor_texto.split(" ")[0]
-                
-                return 'N/A'
-            
-            try:
-                nota_element = soup.find('p', class_=lambda x: x and 'score-component-default__text--large' in x)
-                dados_raspadados['Nota'] = nota_element.text.strip() if nota_element else 'N/A'
-
-                if dados_raspadados['Nota'] == 'N/A':
-                    nota_element_push = soup.find('h2', class_= lambda x:x and 'score' in x )
-                    if nota_element_push:
-                        dados_raspadados['Nota'] = nota_element_push.text.strip().splitlines()[0]
-
-
-
-                dados_raspadados['Reclamações respondidas'] = extrair_do_texto('Respondeu', strong_p=0)
-                dados_raspadados['Voltariam a fazer negócio'] = extrair_do_texto('Dos que avaliaram', strong_p=0)
-                dados_raspadados['Índice de solução'] = extrair_do_texto('A empresa resolveu', strong_p=0)
-                dados_raspadados['Nota do consumidor'] = extrair_do_texto('Há', strong_p=0)
-                
-                print(f"Dados de '{nome_empresa}' raspados com sucesso!")
-                
-            except Exception as e:
-                print(f"ERRO para raspagem {nome_empresa}: {e}")
-                dados_raspadados.update({
-                    k: 'N/A' for k in ['Nota', 'Reclamações respondidas', 'Voltariam a fazer negócio', 'Índice de solução', 'Nota do consumidor'] if k not in dados_raspadados
-                })
-                
-            return dados_raspadados
-   
-   
-    def processar_empresas(self, lista_empresas):
-       
-        if not lista_empresas:
-                print("Lista de empresas vazia. Nada para processar.")
-                return
-        
-        PERIODO_RA = "Geral"   
-
-        for empresa in lista_empresas:
-                nome_empresa = empresa['Nome']
-                url_do_perfil = self.base_url + empresa['Slug_path'] 
-                try: 
-                    if not self.reinicializar_driver():
-                        
-                        print("Parando o processamento devido à falha crítica de inicialização do driver.")
-                        break
+                for periodo_alvo in PERIODOS_ALVO:
                     
-                    time.sleep(2) 
-                    
-                    print(f"\nFazendo raspagem da empresa: {nome_empresa}")
+                    dados = None
 
-                    self.driver.get(url_do_perfil) 
-                    #ajusta periodo
-                    dados_tempo = {}
                     try:
-                        xpath_periodo = f"//button[contains(text(), '{PERIODO_RA})] | //span[text()='{PERIODO_RA}']"
-                        bot_periodo = self.wait.until(EC.element_to_be_clickable((By.XPATH, xpath_periodo)))
-                        bot_periodo.clear()
-                        print(f"periodo ajustado para {PERIODO_RA}")
-                        time.sleep(3)
+                        navegacao_sucedida = self.navegar_por_tabs(periodo_alvo) 
+                        
+                        if navegacao_sucedida:
 
-                        dados_tempo['Periodo'] = PERIODO_RA
-                    except Exception as err:
-                        print(f"Aviso: Não foi possível clicar no período '{PERIODO_RA}'. Usando o padrão da página.")
-                        dados_tempo['Periodo'] = "Padrão (Não Selecionado)"
+                            html_pagina = self.driver.page_source
+                            dados_raspadados = self.raspar_dados(html_pagina, nome_empresa)
+                            
 
-                    self.wait.until(EC.presence_of_element_located((By.TAG_NAME, "footer"))) 
-                    
-                    html_pagina = self.driver.page_source
-                    dados = self.raspar_dados_perfil(html_pagina, nome_empresa)
+                            dados = dados_raspadados 
 
-                    dados['Tipo'] = empresa['Tipo']
-                    dados['URL'] = url_do_perfil
-                    self.results.append(dados) 
-                    
+                    except Exception as e:
+                        print(f"Falha de raspagem no período {periodo_alvo}: {e}")
+                        
+                    finally:
+                        if dados is not None:
+                            dados['Periodo'] = periodo_alvo 
+                            dados['Tipo'] = empresa['Tipo']
+                            dados['URL'] = url_do_perfil
+                            self.results.append(dados) 
+                        else:
+                            self.results.append({
+                                'Empresa': nome_empresa, 'Periodo': periodo_alvo, 
+                                'Tipo': empresa['Tipo'], 'URL': url_do_perfil, 
+                                'Nota': 'N/D', 'Reclamações respondidas': 'N/D', 'Voltariam a fazer negócio': 'N/D', 
+                                'Índice de solução': 'N/D', 'Nota do consumidor': 'N/D'
+                            })
 
-                except Exception as e:
-                    print(f"Falha para processar:  {nome_empresa}. Erro inesperado: {e}")
+
+            except Exception as e:
+                print(f"Falha CRÍTICA (fora do loop) para processar: {nome_empresa}. Erro inesperado: {e}")
                 
-                finally:
-                    self.close() 
-                
-    def encontra_html_empresa(self, url_slug_empresa):
-        print("Corrige Seletores")
-        try:
-            if not self.reinicializar_driver():
-                return
+            finally:
+                self.close() 
 
-            url_completa = self.base_url + url_slug_empresa
-            self.driver.get(url_completa)
-            self.wait.until(EC.presence_of_element_located((By.TAG_NAME, "footer")))
-            
-            # OBTÉM O HTML DA PÁGINA
-            html_pagina = self.driver.page_source
-            soup = BeautifulSoup(html_pagina, 'html.parser')
-            
-            # PROCURA PELO CONTAINER PRINCIPAL DAS ESTATÍSTICAS (Isto é a chave!)
-            # Sugestão 1: Tenta a classe da seção principal de notas (pode precisar de ajuste manual!)
-            container_stats = soup.find('div', class_=lambda x: x and 'ui-score-component' in x) 
-            
-            if not container_stats:
-                # Sugestão 2: Tenta encontrar o container que tem a métrica 'Reclamações respondidas'
-                titulo_tag = soup.find('p', text='Reclamações respondidas')
-                if titulo_tag:
-                    # Pega o elemento pai principal que contém o bloco de estatísticas
-                    container_stats = titulo_tag.find_parent('div', class_=lambda x: x and 'styles_MetricsContainer' in x) # Ajuste de classe
-
-            print(f"\n--- HTML DA SEÇÃO DE ESTATÍSTICAS PARA: {url_slug_empresa} ---")
-            if container_stats:
-                # Imprime o HTML formatado da seção de interesse
-                print(container_stats.prettify())
-                print("\n--- FIM DO HTML DE DIAGNÓSTICO ---")
-            else:
-                print("NÃO FOI POSSÍVEL ISOLAR A SEÇÃO DE MÉTRICAS. Tente outra classe/seletor.")
-                
-        except Exception as e:
-            print(f"Erro durante o diagnóstico: {e}")
-            
-        finally:
-            self.close()
-
+        print("\nProcessamento de todas as empresas concluído.")
 
     def salvar_em_excel(self):
         if not self.results:
@@ -330,7 +348,7 @@ class ReclameAquiScraper:
 
             if self.empresa_salvar:
                 
-                self.processar_empresas(self.empresa_salvar) 
+                self.raspar_empresas(self.empresa_salvar) 
 
                 self.salvar_em_excel()
             else:
